@@ -6,4 +6,5 @@
 __pycache__/
 *.py[cod]
 crime_radar_core.db
+crime_radar_private_export.sql
 *.log

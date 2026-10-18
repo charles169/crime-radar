@@ -1,7 +1,9 @@
 import asyncio
+import hmac
 import html
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from math import asin, ceil, cos, floor, radians, sin, sqrt
@@ -13,7 +15,14 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from branca.element import MacroElement, Template
+from dotenv import load_dotenv
 from folium.plugins import HeatMap
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env")
+
+LOGIN_USERNAME = os.getenv("CRIME_RADAR_LOGIN_USERNAME", "").strip()
+LOGIN_PASSWORD = os.getenv("CRIME_RADAR_LOGIN_PASSWORD", "")
 
 with (Path(__file__).resolve().parents[1] / "backend" / "data" / "tamil_nadu.geojson").open(
     encoding="utf-8"
@@ -266,6 +275,118 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+
+def render_login_page():
+    st.markdown(
+        """
+        <style>
+        [data-testid="stMainBlockContainer"] {
+            max-width: 1120px;
+            padding-top: 5vh;
+        }
+        .login-brand {
+            min-height: 410px;
+            padding: 34px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            background-color: #0a1927;
+            background-image:
+                repeating-linear-gradient(0deg, transparent 0 31px, #17304455 32px),
+                repeating-linear-gradient(90deg, transparent 0 31px, #17304455 32px);
+            border: 1px solid #1b3a4d;
+            border-radius: 8px;
+        }
+        .login-eyebrow {
+            color: #35c9dc;
+            font-size: .72rem;
+            font-weight: 700;
+            letter-spacing: .14em;
+        }
+        .login-brand h1 {
+            color: #e3edf5;
+            font-size: 2.7rem;
+            line-height: 1.05;
+            margin: 22px 0 12px;
+        }
+        .login-brand-copy { color: #9bb4c4; font-size: 1rem; max-width: 380px; }
+        .login-scope { color: #ffc56c; font-size: .76rem; font-weight: 700; }
+        .login-form-title { color: #e3edf5; font-size: 1.45rem; font-weight: 700; }
+        .login-form-copy { color: #86a4b8; margin-bottom: 1.25rem; }
+        div[data-testid="stFormSubmitButton"] button {
+            background: #35c9dc;
+            color: #07111d;
+            border: 0;
+            font-weight: 700;
+        }
+        @media (max-width: 700px) {
+            [data-testid="stMainBlockContainer"] { padding: 1rem .75rem; }
+            .login-brand { min-height: 270px; padding: 24px; }
+            .login-brand h1 { font-size: 2.2rem; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    brand_column, form_column = st.columns([1.1, 0.9], gap="large")
+    with brand_column:
+        st.markdown(
+            """
+            <section class="login-brand">
+              <div>
+                <div class="login-eyebrow">SECURE OPERATIONS ACCESS</div>
+                <h1>C.R.I.M.E.<br>Radar</h1>
+                <p class="login-brand-copy">
+                  Coordinated incident awareness for Tamil Nadu.
+                </p>
+              </div>
+              <div class="login-scope">PRIVATE OPERATOR DASHBOARD · TAMIL NADU ONLY</div>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+    with form_column:
+        st.markdown(
+            '<div class="login-form-title">Operator sign in</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="login-form-copy">Use your assigned dashboard credentials.</div>',
+            unsafe_allow_html=True,
+        )
+        login_configured = bool(LOGIN_USERNAME and LOGIN_PASSWORD)
+        if not login_configured:
+            st.warning("Operator login is not configured for this installation.")
+            st.caption(
+                "Set CRIME_RADAR_LOGIN_USERNAME and CRIME_RADAR_LOGIN_PASSWORD "
+                "in the ignored .env file, then restart the dashboard."
+            )
+
+        with st.form("operator-login"):
+            username = st.text_input("Operator ID", autocomplete="username")
+            password = st.text_input(
+                "Password", type="password", autocomplete="current-password"
+            )
+            submitted = st.form_submit_button(
+                "Sign in",
+                use_container_width=True,
+                disabled=not login_configured,
+            )
+
+        if submitted:
+            username_matches = hmac.compare_digest(username, LOGIN_USERNAME)
+            password_matches = hmac.compare_digest(password, LOGIN_PASSWORD)
+            if username_matches and password_matches:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            st.error("Credentials not recognized.")
+
+
+if not st.session_state.get("authenticated", False):
+    render_login_page()
+    st.stop()
+
+
 def haversine(lon1, lat1, lon2, lat2):
     lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
     dlon, dlat = lon2 - lon1, lat2 - lat1
@@ -331,6 +452,11 @@ def toggle_incident_map_focus(event_id):
     st.session_state["map_focus_event_id"] = event_id
 
 
+def escape_markdown(value):
+    escaped = html.escape(str(value))
+    return re.sub(r"([\\`*_{}\[\]()#+\-.!|>])", r"\\\1", escaped)
+
+
 def record_incident_station_alert(
     incident_id,
     incident_type,
@@ -354,18 +480,32 @@ def record_incident_station_alert(
         return
 
     st.session_state["last_auto_case_rotation_at"] = time.monotonic()
+    sent_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    alert = {
+        "sent_at": sent_at,
+        "station_name": station_name,
+        "incident_id": incident_id,
+        "incident_type": incident_type,
+        "distance_km": distance_km,
+        "address": address,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+    alert_message = (
+        "SIMULATED DISPATCH NOTICE — NOT SENT\n"
+        f"Case reference: {incident_id}\n"
+        f"Incident type: {incident_type}\n"
+        f"Assigned station: {station_name} ({distance_km:.2f} km)\n"
+        f"Location: {address}\n"
+        f"Coordinates: {latitude:.5f}, {longitude:.5f}\n"
+        f"Logged: {sent_at}"
+    )
     outbox = st.session_state.setdefault("station_alert_outbox", [])
     outbox.append(
         {
-            "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "station_name": station_name,
-            "incident_id": incident_id,
-            "incident_type": incident_type,
+            **alert,
             "distance_km": f"{distance_km:.2f}",
-            "message": (
-                f"Incident: {incident_type} at {address} "
-                f"({latitude:.5f}, {longitude:.5f})."
-            ),
+            "message": alert_message,
             "status": "SIMULATED — NOT SENT",
         }
     )
@@ -382,9 +522,7 @@ def record_incident_station_alert(
         st.session_state.setdefault("released_action_incident_ids", set()).add(
             next_incident_id
         )
-    st.session_state["station_alert_confirmation"] = (
-        f"Alert message sent to {station_name} (simulated)."
-    )
+    st.session_state["station_alert_confirmation"] = alert
 
 
 def is_training_status(status):
@@ -515,6 +653,14 @@ def get_json(path, params=None):
     return response.json()
 
 
+@st.cache_data(ttl=60, max_entries=16, show_spinner=False)
+def load_crime_trends(days, include_demo):
+    return get_json(
+        "/api/v1/analytics/trends",
+        params={"days": days, "include_demo": include_demo},
+    )
+
+
 ROUTING_SERVICE_URL = os.getenv(
     "CRIME_RADAR_ROUTING_URL", "https://router.project-osrm.org"
 ).rstrip("/")
@@ -575,6 +721,57 @@ st.markdown(
     .radar-live-alert { background: #142736; border: 1px solid #1d5267;
         border-left: 3px solid #22bad1; color: #a6dcec; border-radius: 5px;
         padding: 8px 10px; font-size: .8rem; font-weight: 650; }
+    .radar-spike-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px; margin: 10px 0 16px;
+    }
+    .radar-spike-card {
+        min-width: 0; padding: 12px 14px;
+        background: linear-gradient(145deg, #102438, #0a1725);
+        border: 1px solid #8b6734; border-left: 3px solid #ffbf69;
+        border-radius: 8px;
+    }
+    .radar-spike-card.elevated {
+        border-color: #286579; border-left-color: #35c9dc;
+    }
+    .radar-spike-top {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 12px;
+    }
+    .radar-spike-date { color: #dcebf4; font-size: .82rem; font-weight: 700; }
+    .radar-spike-severity {
+        flex: 0 0 auto; padding: 3px 7px; border: 1px solid #8b6734;
+        border-radius: 999px; color: #ffd28a; font-size: .65rem;
+        font-weight: 750; text-transform: uppercase;
+    }
+    .radar-spike-card.elevated .radar-spike-severity {
+        border-color: #286579; color: #7de5f2;
+    }
+    .radar-spike-count {
+        margin-top: 8px; color: #f1f7fb; font-size: 1.2rem; font-weight: 800;
+    }
+    .radar-spike-detail {
+        margin-top: 3px; color: #91aabd; font-size: .72rem; line-height: 1.45;
+    }
+    .radar-no-spikes {
+        margin: 10px 0 16px; padding: 12px 14px;
+        background: #0c2030; border: 1px solid #23465b;
+        border-radius: 8px; color: #9fb8c9; font-size: .82rem;
+    }
+    .radar-no-spikes strong { color: #cfe2ee; }
+    div[data-testid="stToast"] {
+        background: linear-gradient(145deg, #102b40, #0a1927 85%);
+        border: 1px solid #2785a5; border-left: 3px solid #35c9dc;
+        border-radius: 8px;
+        box-shadow: inset 0 1px 0 rgba(117, 226, 255, .14),
+            0 0 20px rgba(23, 166, 213, .16);
+    }
+    div[data-testid="stToast"] [data-testid="stMarkdownContainer"] {
+        color: #dff7ff; font-size: .82rem; line-height: 1.45;
+    }
+    div[data-testid="stToast"] [data-testid="stMarkdownContainer"] p {
+        margin: 0;
+    }
     .radar-no-feed { color: #ffc56c; font-size: .75rem; font-weight: 700;
         text-align: right; border: 1px solid #594729; background: #241e15;
         border-radius: 5px; padding: 6px 9px; }
@@ -594,7 +791,8 @@ st.markdown(
     .radar-cluster-card small { color: #86a4b8; }
     .radar-cluster-count { float: right; color: #45c6d8; font-size: 1rem;
         font-weight: 800; }
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.incident-hud-content) {
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.incident-hud-content),
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.radar-trend-page) {
         background: linear-gradient(145deg, #0c2235, #081523 75%);
         border: 1px solid #287f96; border-radius: 6px; padding: 10px 12px;
         box-shadow: inset 0 1px 0 rgba(89, 214, 232, .12),
@@ -890,6 +1088,9 @@ with header_left:
         unsafe_allow_html=True,
     )
 with header_right:
+    if st.button("Sign out", key="operator-sign-out", use_container_width=True):
+        st.session_state.pop("authenticated", None)
+        st.rerun()
     st.markdown(
         f'<p class="radar-no-feed">● NO LIVE AGENCY FEED<br>'
         f'<span style="font-weight:400">{time.strftime("%H:%M")} LOCAL · TN ONLY</span></p>',
@@ -900,18 +1101,19 @@ st.divider()
 
 dashboard_page = st.radio(
     "Dashboard",
-    options=["◉  Live operations", "↗  Crime trend analysis"],
+    options=["◉  Live operations", "↗  Crime Analysis"],
     horizontal=True,
     label_visibility="collapsed",
     key="command-center-page",
 )
 
-def render_crime_trends_dashboard():
+def render_crime_trends_content():
     st.markdown(
+        '<div class="radar-trend-page">'
         '<p class="radar-analytics-heading">INTELLIGENCE & REPORTING</p>'
-        '<h1 class="radar-page-heading">Crime trend analysis</h1>'
+        '<h1 class="radar-page-heading">Crime Analysis</h1>'
         '<p class="radar-page-copy">Compare report activity, identify unusual '
-        'changes, and review trends over matched time periods.</p>',
+        'changes, and review trends over matched time periods.</p></div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -990,6 +1192,37 @@ def render_crime_trends_dashboard():
         "These are statistical review cues, not predictions or verified events."
     )
     spike_days = trends.get("spike_days", [])
+    spike_timeline = trends.get("spike_timeline", [])
+    if spike_timeline:
+        spike_chart = pd.DataFrame(spike_timeline)
+        spike_chart["date"] = pd.to_datetime(spike_chart["date"])
+        spike_chart = spike_chart.set_index("date")
+        spike_chart = spike_chart.rename(
+            columns={
+                "count": "Reports",
+                "baseline_average": "7-day baseline",
+                "spike_threshold": "Review threshold",
+                "high_threshold": "High threshold",
+            }
+        )[
+            [
+                "Reports",
+                "7-day baseline",
+                "Review threshold",
+                "High threshold",
+            ]
+        ]
+        st.markdown("##### Daily reports vs. spike thresholds")
+        st.caption(
+            "The threshold lines use the same preceding 7-day baseline and "
+            "criteria as the spike flags below."
+        )
+        st.line_chart(
+            spike_chart,
+            color=["#35c9dc", "#aa91ff", "#ffbf69", "#ff596d"],
+            use_container_width=True,
+        )
+
     if spike_days:
         spike_cards = []
         for spike in spike_days:
@@ -1073,28 +1306,25 @@ def render_crime_trends_dashboard():
         else:
             st.caption("No incident types in the selected periods.")
 
-    if trends["priorities"]:
-        st.markdown("#### Priority distribution")
-        priority_df = pd.DataFrame(trends["priorities"]).set_index("priority")[
-            ["current_count", "previous_count"]
-        ].rename(
-            columns={
-                "current_count": "Current",
-                "previous_count": "Previous",
-            }
-        )
-        st.bar_chart(
-            priority_df,
-            horizontal=True,
-            color=["#35c9dc", "#758cff"],
-        )
-
+def render_crime_trends_dashboard():
+    with st.container(border=True):
+        render_crime_trends_content()
 
 @st.fragment
 def render_live_dashboard():
     alert_confirmation = st.session_state.pop("station_alert_confirmation", None)
     if alert_confirmation:
-        st.toast(alert_confirmation, icon="📡")
+        if isinstance(alert_confirmation, dict):
+            notification = (
+                "**DISPATCH SIMULATED · NOT SENT**\n\n"
+                f"Case {escape_markdown(alert_confirmation['incident_id'])} · "
+                f"{escape_markdown(alert_confirmation['incident_type'])} → "
+                f"{escape_markdown(alert_confirmation['station_name'])} · "
+                f"{alert_confirmation['distance_km']:.1f} km"
+            )
+            st.toast(notification, icon="📡")
+        else:
+            st.toast(str(alert_confirmation), icon="📡")
 
     st.markdown(
         '<p class="radar-analytics-heading">LIVE OPERATIONS</p>'
@@ -2617,4 +2847,7 @@ def render_live_dashboard():
                         args=(selected_route_incident_id,),
                     )
 
-render_live_dashboard()
+if dashboard_page == "↗  Crime Analysis":
+    render_crime_trends_dashboard()
+else:
+    render_live_dashboard()

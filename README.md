@@ -31,6 +31,18 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 streamlit run frontend/app.py
 ```
 
+The dashboard is restricted to a local operator account. Configure the
+credentials in the git-ignored `.env` file before signing in:
+
+```dotenv
+CRIME_RADAR_LOGIN_USERNAME=operator
+CRIME_RADAR_LOGIN_PASSWORD=replace-with-a-strong-local-password
+```
+
+Restart the dashboard after changing these values. The sign-in gate protects
+the Streamlit dashboard only; keep the API bound to `127.0.0.1` unless API
+authentication is added before exposing it to other machines.
+
 Open the dashboard at <http://127.0.0.1:8501>. Use **Refresh dashboard data**
 to fetch the latest SQL-backed incidents and patrol data; the map does not
 automatically rerender between refreshes. Cases advance when dashboard data is
@@ -53,7 +65,7 @@ The dashboard also shows in-app toast alerts for newly detected critical
 incidents. API documentation is at
 <http://127.0.0.1:8000/docs>.
 
-Select **Crime trend analysis** in the dashboard navigation to compare daily
+Select **Crime Analysis** in the dashboard navigation to compare daily
 incident counts, types, and priorities across a selected period and the
 preceding equal-length period. Simulated/demo records are excluded by default.
 The charts describe recorded reports, not forecasts or verified incidents.

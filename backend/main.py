@@ -252,6 +252,7 @@ async def get_crime_trends(
         for offset in range(days - 1, -1, -1)
     ]
     spike_days = []
+    spike_timeline = []
     for day in current_days:
         incident_day = datetime.fromisoformat(day["date"]).date()
         baseline_days = [
@@ -266,14 +267,22 @@ async def get_crime_trends(
             ceil(baseline_average * 2),
             ceil(baseline_average + 3),
         )
-        if day["count"] < spike_threshold:
-            continue
-
         high_threshold = max(
             5,
             ceil(baseline_average * 3),
             ceil(baseline_average + 5),
         )
+        spike_timeline.append(
+            {
+                **day,
+                "baseline_average": round(baseline_average, 2),
+                "spike_threshold": spike_threshold,
+                "high_threshold": high_threshold,
+            }
+        )
+        if day["count"] < spike_threshold:
+            continue
+
         spike_days.append(
             {
                 **day,
@@ -303,6 +312,7 @@ async def get_crime_trends(
         "include_demo": include_demo,
         "daily_counts": current_days,
         "spike_days": spike_days,
+        "spike_timeline": spike_timeline,
         "spike_detection": {
             "baseline_days": 7,
             "minimum_reports": 3,
