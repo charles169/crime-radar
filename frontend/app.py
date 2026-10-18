@@ -428,6 +428,82 @@ def display_incident_time(value):
     return local_time.strftime("%d %b %Y, %I:%M %p IST")
 
 
+def render_crime_risk_zones():
+    st.markdown(
+        '<p class="radar-analytics-heading">REPORTED CRIME RISK</p>'
+        '<h1 class="radar-page-heading">Crime risk zones</h1>'
+        '<p class="radar-page-copy">Existing reports grouped by area. '
+        'Risk levels are relative to the observed report counts, not predictions.</p>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        incidents_data, _, _, _ = asyncio.run(load_dashboard_data())
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        st.error(f"Crime report data is unavailable: {exc}")
+        return
+
+    incidents_df = pd.DataFrame(incidents_data)
+    if incidents_df.empty or "address" not in incidents_df:
+        st.info("No existing crime records are currently available.")
+        return
+
+    area_names = (
+        incidents_df["address"]
+        .astype("string")
+        .dropna()
+        .str.split(",", n=1)
+        .str[0]
+        .str.strip()
+    )
+    area_names = area_names.loc[area_names.ne("") & area_names.notna()]
+    area_counts = area_names.value_counts().sort_values(ascending=False, kind="stable")
+    if area_counts.empty:
+        st.info("Existing crime records do not include usable area names.")
+        return
+
+    lower_threshold = area_counts.quantile(1 / 3)
+    upper_threshold = area_counts.quantile(2 / 3)
+    st.caption(
+        "Count-based thresholds from the observed areas: Lower ≤ "
+        f"{lower_threshold:g} reports; Moderate > {lower_threshold:g} and ≤ "
+        f"{upper_threshold:g}; Higher > {upper_threshold:g} reports."
+    )
+
+    categories = (
+        ("Lower reported crime", "lower"),
+        ("Moderate reported crime", "moderate"),
+        ("Higher reported crime", "higher"),
+    )
+    category_columns = st.columns(3, gap="medium")
+    for column, (label, level) in zip(category_columns, categories):
+        with column:
+            area_rows = []
+            for area, count in area_counts.items():
+                if (
+                    (level == "lower" and count <= lower_threshold)
+                    or (
+                        level == "moderate"
+                        and lower_threshold < count <= upper_threshold
+                    )
+                    or (level == "higher" and count > upper_threshold)
+                ):
+                    area_rows.append(
+                        '<div class="radar-risk-area">'
+                        f'<strong>{html.escape(str(area))}</strong>'
+                        f'<span>{int(count)} reports</span></div>'
+                    )
+            if not area_rows:
+                area_rows.append(
+                    '<p class="radar-risk-empty">No areas fall in this count range.</p>'
+                )
+            st.markdown(
+                f'<section class="radar-risk-card {level}">'
+                f'<h3>{label}</h3>{"".join(area_rows)}</section>',
+                unsafe_allow_html=True,
+            )
+
+
 def render_complaint_tracking():
     st.markdown(
         '<p class="radar-analytics-heading">COMPLAINT TRACKING</p>'
@@ -763,6 +839,23 @@ st.markdown(
     .radar-cluster-card small { color: #86a4b8; }
     .radar-cluster-count { float: right; color: #45c6d8; font-size: 1rem;
         font-weight: 800; }
+    .radar-risk-card { background: #0a1927; border: 1px solid #1b3a4d;
+        border-left: 3px solid #1b3a4d; border-radius: 8px; padding: 14px;
+        min-height: 100%; }
+    .radar-risk-card h3 { color: #aec6d6; font-size: .9rem;
+        letter-spacing: .04em; margin: 0 0 12px; }
+    .radar-risk-card.lower { border-left-color: #83c995; }
+    .radar-risk-card.lower h3 { color: #83c995; }
+    .radar-risk-card.moderate { border-left-color: #f0a33a; }
+    .radar-risk-card.moderate h3 { color: #f0a33a; }
+    .radar-risk-card.higher { border-left-color: #ff4559; }
+    .radar-risk-card.higher h3 { color: #ff4559; }
+    .radar-risk-area { display: flex; justify-content: space-between;
+        gap: 10px; padding: 8px 0; border-top: 1px solid #1b3a4d;
+        color: #d7e4ef; font-size: .82rem; }
+    .radar-risk-area strong { overflow-wrap: anywhere; }
+    .radar-risk-area span { color: #86a4b8; white-space: nowrap; }
+    .radar-risk-empty { color: #86a4b8; font-size: .82rem; }
     div[data-testid="stVerticalBlockBorderWrapper"]:has(.incident-hud-content) {
         background: linear-gradient(145deg, #0c2235, #081523 75%);
         border: 1px solid #287f96; border-radius: 6px; padding: 10px 12px;
@@ -1073,6 +1166,7 @@ dashboard_page = st.radio(
         "◉  Live operations",
         "↗  Crime trend analysis",
         "▤  Track Complaint",
+        "◈  Crime risk zones",
     ],
     horizontal=True,
     label_visibility="collapsed",
@@ -2795,5 +2889,7 @@ def render_live_dashboard():
 
 if dashboard_page == "▤  Track Complaint":
     render_complaint_tracking()
+elif dashboard_page == "◈  Crime risk zones":
+    render_crime_risk_zones()
 else:
     render_live_dashboard()
