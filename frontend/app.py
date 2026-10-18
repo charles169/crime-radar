@@ -311,22 +311,77 @@ def render_login_page():
     st.markdown(
         """
         <style>
+        .stApp {
+            background-color: #050b14;
+            background-image:
+                radial-gradient(ellipse at 12% 18%, rgba(19, 139, 178, .2), transparent 34%),
+                radial-gradient(ellipse at 88% 76%, rgba(38, 91, 177, .18), transparent 38%),
+                radial-gradient(circle at 72% 12%, rgba(36, 197, 218, .1), transparent 22%),
+                linear-gradient(rgba(74, 149, 184, .045) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(74, 149, 184, .045) 1px, transparent 1px),
+                linear-gradient(145deg, #050b14, #081522 52%, #07101d);
+            background-size:
+                145% 145%, 150% 150%, 130% 130%,
+                42px 42px, 42px 42px, 100% 100%;
+            background-position: 0% 0%, 100% 100%, 75% 0%, center, center, center;
+            animation: login-background-drift 28s ease-in-out infinite alternate;
+        }
+        [data-testid="stHeader"],
+        [data-testid="stToolbar"] {
+            background: transparent;
+        }
+        [data-testid="stAppViewContainer"] {
+            background: transparent;
+        }
         [data-testid="stMainBlockContainer"] {
-            max-width: 1120px;
-            padding-top: 5vh;
+            position: relative;
+            z-index: 1;
+        }
+        @keyframes login-background-drift {
+            from { background-position: 0% 0%, 100% 100%, 75% 0%, center, center, center; }
+            to { background-position: 12% 8%, 88% 92%, 65% 12%, center, center, center; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .stApp { animation: none; }
+        }
+        [data-testid="stMainBlockContainer"] {
+            max-width: 1280px;
+            padding-top: max(5vh, 2rem);
+            padding-bottom: 3rem;
         }
         .login-brand {
+            box-sizing: border-box;
             min-height: 410px;
             padding: 34px;
             display: flex;
+            position: relative;
+            overflow: hidden;
             flex-direction: column;
             justify-content: space-between;
-            background-color: #0a1927;
             background-image:
+                radial-gradient(ellipse at 15% 0%, rgba(53, 201, 220, .15), transparent 48%),
+                linear-gradient(145deg, #0d2234, #081522 78%),
                 repeating-linear-gradient(0deg, transparent 0 31px, #17304455 32px),
                 repeating-linear-gradient(90deg, transparent 0 31px, #17304455 32px);
             border: 1px solid #1b3a4d;
-            border-radius: 8px;
+            border-top: 3px solid #35c9dc;
+            border-radius: 12px;
+            box-shadow: 0 16px 42px rgba(0, 0, 0, .24),
+                0 0 28px rgba(53, 201, 220, .09),
+                inset 0 1px 0 rgba(130, 232, 247, .12);
+            animation: login-panel-in .65s ease-out both;
+        }
+        .login-brand::after {
+            position: absolute;
+            top: -35%;
+            left: -45%;
+            width: 32%;
+            height: 170%;
+            background: linear-gradient(90deg, transparent, rgba(112, 231, 247, .07), transparent);
+            content: "";
+            pointer-events: none;
+            transform: rotate(18deg);
+            animation: login-scan 8s ease-in-out 1s infinite;
         }
         .login-eyebrow {
             color: #35c9dc;
@@ -334,6 +389,8 @@ def render_login_page():
             font-weight: 700;
             letter-spacing: .14em;
         }
+        .login-brand > div,
+        .login-scope { position: relative; z-index: 1; }
         .login-brand h1 {
             color: #e3edf5;
             font-size: 2.7rem;
@@ -344,15 +401,79 @@ def render_login_page():
         .login-scope { color: #ffc56c; font-size: .76rem; font-weight: 700; }
         .login-form-title { color: #e3edf5; font-size: 1.45rem; font-weight: 700; }
         .login-form-copy { color: #86a4b8; margin-bottom: 1.25rem; }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-form-marker):not(
+            :has(div[data-testid="stVerticalBlockBorderWrapper"] .login-form-marker)
+        ) {
+            box-sizing: border-box;
+            width: 100%;
+            min-height: 410px;
+            padding: 26px 28px;
+            display: flex;
+            align-items: center;
+            background: linear-gradient(145deg, #0d2234, #081522 78%);
+            border: 1px solid #1b3a4d;
+            border-top: 3px solid #35c9dc;
+            border-radius: 12px;
+            box-shadow: 0 16px 42px rgba(0, 0, 0, .24),
+                0 0 28px rgba(53, 201, 220, .09),
+                inset 0 1px 0 rgba(130, 232, 247, .12);
+            animation: login-panel-in .65s ease-out .1s both;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-form-marker)
+            [data-testid="stForm"] {
+            padding: 0;
+            border: 0;
+            background: transparent;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-form-marker)
+            [data-testid="stTextInput"] input {
+            background: #0a1927;
+            border: 1px solid #29465a;
+            transition: border-color .18s ease, box-shadow .18s ease;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-form-marker)
+            [data-testid="stTextInput"] input:focus {
+            border-color: #35c9dc;
+            box-shadow: 0 0 0 1px #35c9dc, 0 0 18px rgba(53, 201, 220, .18);
+        }
         div[data-testid="stFormSubmitButton"] button {
             background: #35c9dc;
             color: #07111d;
-            border: 0;
+            border: 1px solid #35c9dc;
+            border-radius: 8px;
             font-weight: 700;
+            box-shadow: 0 6px 18px rgba(53, 201, 220, .14);
+            transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+        }
+        div[data-testid="stFormSubmitButton"] button:hover {
+            filter: brightness(1.08);
+            transform: translateY(-1px);
+            box-shadow: 0 9px 24px rgba(53, 201, 220, .25);
+        }
+        @keyframes login-panel-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes login-scan {
+            0%, 22% { left: -45%; }
+            58%, 100% { left: 125%; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .stApp { animation: none; }
+            .login-brand, div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-form-marker) {
+                animation: none;
+            }
+            .login-brand::after { animation: none; }
         }
         @media (max-width: 700px) {
             [data-testid="stMainBlockContainer"] { padding: 1rem .75rem; }
             .login-brand { min-height: 270px; padding: 24px; }
+            div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-form-marker):not(
+                :has(div[data-testid="stVerticalBlockBorderWrapper"] .login-form-marker)
+            ) {
+                min-height: 0;
+                padding: 22px 20px;
+            }
             .login-brand h1 { font-size: 2.2rem; }
         }
         </style>
@@ -377,32 +498,37 @@ def render_login_page():
             unsafe_allow_html=True,
         )
     with form_column:
-        st.markdown(
-            '<div class="login-form-title">Operator sign in</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div class="login-form-copy">Use your assigned dashboard credentials.</div>',
-            unsafe_allow_html=True,
-        )
-        login_configured = bool(LOGIN_USERNAME and LOGIN_PASSWORD)
-        if not login_configured:
-            st.warning("Operator login is not configured for this installation.")
-            st.caption(
-                "Set CRIME_RADAR_LOGIN_USERNAME and CRIME_RADAR_LOGIN_PASSWORD "
-                "in the ignored .env file, then restart the dashboard."
+        with st.container(border=True):
+            st.markdown(
+                '<span class="login-form-marker"></span>',
+                unsafe_allow_html=True,
             )
+            st.markdown(
+                '<div class="login-form-title">Operator sign in</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<div class="login-form-copy">Use your assigned dashboard credentials.</div>',
+                unsafe_allow_html=True,
+            )
+            login_configured = bool(LOGIN_USERNAME and LOGIN_PASSWORD)
+            if not login_configured:
+                st.warning("Operator login is not configured for this installation.")
+                st.caption(
+                    "Set CRIME_RADAR_LOGIN_USERNAME and CRIME_RADAR_LOGIN_PASSWORD "
+                    "in the ignored .env file, then restart the dashboard."
+                )
 
-        with st.form("operator-login"):
-            username = st.text_input("Operator ID", autocomplete="username")
-            password = st.text_input(
-                "Password", type="password", autocomplete="current-password"
-            )
-            submitted = st.form_submit_button(
-                "Sign in",
-                use_container_width=True,
-                disabled=not login_configured,
-            )
+            with st.form("operator-login"):
+                username = st.text_input("Operator ID", autocomplete="username")
+                password = st.text_input(
+                    "Password", type="password", autocomplete="current-password"
+                )
+                submitted = st.form_submit_button(
+                    "Sign in",
+                    use_container_width=True,
+                    disabled=not login_configured,
+                )
 
         if submitted:
             username_matches = hmac.compare_digest(username, LOGIN_USERNAME)
@@ -1066,8 +1192,19 @@ st.markdown(
     .radar-cluster-card small { color: #86a4b8; }
     .radar-cluster-count { float: right; color: #45c6d8; font-size: 1rem;
         font-weight: 800; }
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.incident-hud-content),
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.radar-trend-page) {
+    div[data-testid="stAppViewBlockContainer"] >
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.radar-page-heading) {
+        box-sizing: border-box;
+        width: 100%;
+        margin: 0;
+        padding: 16px 18px;
+        background: linear-gradient(145deg, #0c2235, #091522 75%);
+        border: 1px solid #24566a;
+        border-top: 3px solid #35c9dc;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(69, 198, 216, .08);
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.incident-hud-content) {
         background: linear-gradient(145deg, #0c2235, #081523 75%);
         border: 1px solid #287f96; border-radius: 6px; padding: 10px 12px;
         box-shadow: inset 0 1px 0 rgba(89, 214, 232, .12),
@@ -1090,18 +1227,6 @@ st.markdown(
     .radar-risk-area strong { overflow-wrap: anywhere; }
     .radar-risk-area span { color: #86a4b8; white-space: nowrap; }
     .radar-risk-empty { color: #86a4b8; font-size: .82rem; }
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.radar-risk-page-title) {
-        background: linear-gradient(145deg, #0c2235, #091522 75%);
-        border: 1px solid #24566a; border-top: 3px solid #45c6d8;
-        border-radius: 12px; padding: 18px 20px;
-        box-shadow: 0 8px 24px rgba(69, 198, 216, .08);
-    }
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.radar-complaint-page-title) {
-        background: linear-gradient(145deg, #0c2235, #091522 75%);
-        border: 1px solid #24566a; border-top: 3px solid #45c6d8;
-        border-radius: 12px; padding: 18px 20px;
-        box-shadow: 0 8px 24px rgba(69, 198, 216, .08);
-    }
     .incident-hud-kicker { color: #59d6e8; font-size: .65rem; font-weight: 750;
         letter-spacing: .14em; text-transform: uppercase; }
     .incident-hud-title { color: #effaff; font-size: .98rem; font-weight: 750;
@@ -2150,8 +2275,7 @@ def render_crime_trends_content():
             st.caption("No incident types in the selected periods.")
 
 def render_crime_trends_dashboard():
-    with st.container(border=True):
-        render_crime_trends_content()
+    render_crime_trends_content()
 
 @st.fragment
 def render_live_dashboard():
@@ -3704,15 +3828,14 @@ def render_live_dashboard():
                         args=(selected_route_incident_id,),
                     )
 
-if dashboard_page == "↗  Crime Analysis":
-    render_crime_trends_dashboard()
-elif dashboard_page == "▤  Track Complaint":
-    with st.container(border=True):
+with st.container(border=True):
+    if dashboard_page == "↗  Crime Analysis":
+        render_crime_trends_dashboard()
+    elif dashboard_page == "▤  Track Complaint":
         render_complaint_tracking()
-elif dashboard_page == "◈  Related crime incidents":
-    render_related_incidents()
-elif dashboard_page == "◈  Crime risk zones":
-    with st.container(border=True):
+    elif dashboard_page == "◈  Related crime incidents":
+        render_related_incidents()
+    elif dashboard_page == "◈  Crime risk zones":
         render_crime_risk_zones()
-else:
-    render_live_dashboard()
+    else:
+        render_live_dashboard()
