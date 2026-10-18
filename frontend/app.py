@@ -1,10 +1,11 @@
 import asyncio
+import hmac
 import html
 import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from math import asin, ceil, cos, floor, radians, sin, sqrt
+from math import asin, atan2, ceil, cos, degrees, floor, radians, sin, sqrt
 from pathlib import Path
 
 import folium
@@ -13,7 +14,19 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from branca.element import MacroElement, Template
+from dotenv import load_dotenv
 from folium.plugins import HeatMap
+
+def load_login_credentials():
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+    username = os.getenv("CRIME_RADAR_LOGIN_USERNAME", "").strip()
+    password = os.getenv("CRIME_RADAR_LOGIN_PASSWORD", "").strip()
+    return username, password
+
+
+LOGIN_USERNAME, LOGIN_PASSWORD = load_login_credentials()
 
 with (Path(__file__).resolve().parents[1] / "backend" / "data" / "tamil_nadu.geojson").open(
     encoding="utf-8"
@@ -24,7 +37,33 @@ with (Path(__file__).resolve().parents[1] / "backend" / "data" / "tamil_nadu.geo
 class TacticalTileStyle(MacroElement):
     _template = Template(
         """{% macro html(this, kwargs) %}
-        <style>.leaflet-container {background:#07111d;}
+        <style>.leaflet-container {
+            background:#040b16;
+            border:1px solid rgba(116,190,255,.18);
+            border-radius:16px;
+            box-shadow:inset 0 0 0 1px rgba(94,176,255,.12), 0 18px 32px rgba(0,0,0,.22);
+            font-family:Arial,sans-serif;
+        }
+        .leaflet-control-zoom,
+        .leaflet-control-layers,
+        .leaflet-control-attribution {
+            background:rgba(7,17,29,.82) !important;
+            border:1px solid rgba(110,175,255,.28) !important;
+            border-radius:10px !important;
+            color:#dfeef8 !important;
+            box-shadow:0 12px 22px rgba(2,7,12,.35);
+        }
+        .leaflet-control-zoom a,
+        .leaflet-control-layers-toggle {
+            background:rgba(10,28,44,.94) !important;
+            color:#dfeef8 !important;
+            border-bottom:1px solid rgba(110,175,255,.2) !important;
+        }
+        .leaflet-control-attribution,
+        .leaflet-control-attribution a {
+            color:#c9d9ea !important;
+            font-size:10px;
+        }
         .leaflet-heatmap-layer {filter:drop-shadow(0 0 9px rgba(255,98,42,.6));}
         .leaflet-fade-anim .leaflet-tile,
         .leaflet-fade-anim .leaflet-popup {transition:none !important;}
@@ -46,11 +85,11 @@ class TacticalTileStyle(MacroElement):
             box-shadow:0 0 0 7px #ff354d55,0 0 20px 8px #ff354dcc;}
         .selected-incident-target::after {position:absolute;content:"";
             inset:7px;background:#fff;border-radius:50%;}
-        .leaflet-popup-content-wrapper {background:#081a2b;
-            border:1px solid #2c9bb1;border-radius:7px;
+        .leaflet-popup-content-wrapper {background:rgba(5,16,28,.94);
+            border:1px solid #2b8bc4;border-radius:10px;
             box-shadow:0 0 18px rgba(20,190,220,.2);color:#d7eaf1;}
         .leaflet-popup-content {margin:0;max-width:310px;width: min(310px, 72vw);}
-        .leaflet-popup-tip {background:#081a2b;border:1px solid #2c9bb1;}
+        .leaflet-popup-tip {background:rgba(5,16,28,.94);border:1px solid #2b8bc4;}
         .leaflet-popup-close-button {color:#66d8e9 !important;}
         .incident-hud-content {color:#d7eaf1;font-family:Arial,sans-serif;
             padding:12px;}
@@ -515,6 +554,13 @@ def get_json(path, params=None):
     return response.json()
 
 
+def load_crime_trends(days, include_demo):
+    return get_json(
+        "/api/v1/analytics/trends",
+        params={"days": days, "include_demo": include_demo},
+    )
+
+
 ROUTING_SERVICE_URL = os.getenv(
     "CRIME_RADAR_ROUTING_URL", "https://router.project-osrm.org"
 ).rstrip("/")
@@ -877,6 +923,62 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+def render_login_page():
+    st.markdown(
+        '<p class="radar-analytics-heading">SECURE OPERATOR ACCESS</p>'
+        '<h1 class="radar-page-heading">Sign in to C.R.I.M.E. Radar</h1>'
+        '<p class="radar-page-copy">Private operations dashboard · Tamil Nadu</p>',
+        unsafe_allow_html=True,
+    )
+    brand_column, form_column = st.columns([1.2, 1], gap="large")
+    with brand_column:
+        st.markdown(
+            '<div class="radar-panel"><h3>CRIME HOTSPOT MAPPING</h3>'
+            '<p>Coordinated incident awareness for Tamil Nadu.</p>'
+            '<small>PRIVATE OPERATOR DASHBOARD · TAMIL NADU ONLY</small></div>',
+            unsafe_allow_html=True,
+        )
+    with form_column:
+        with st.container(border=True):
+            st.markdown("### Operator sign in")
+            configured_username, configured_password = load_login_credentials()
+            login_configured = bool(configured_username and configured_password)
+            if not login_configured:
+                st.warning("Operator sign-in is not configured for this installation.")
+                st.caption(
+                    "Set CRIME_RADAR_LOGIN_USERNAME and CRIME_RADAR_LOGIN_PASSWORD "
+                    "in the ignored .env file, then restart the dashboard."
+                )
+            with st.form("operator-login"):
+                username = st.text_input("Operator ID", autocomplete="username")
+                password = st.text_input(
+                    "Password", type="password", autocomplete="current-password"
+                )
+                submitted = st.form_submit_button(
+                    "Sign in",
+                    use_container_width=True,
+                    disabled=not login_configured,
+                )
+            if submitted:
+                sanitized_username = username.strip()
+                sanitized_password = password.strip()
+                username_matches = hmac.compare_digest(
+                    sanitized_username, configured_username
+                )
+                password_matches = hmac.compare_digest(
+                    sanitized_password, configured_password
+                )
+                if username_matches and password_matches:
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                st.error("Credentials not recognized.")
+
+
+if not st.session_state.get("authenticated", False):
+    render_login_page()
+    st.stop()
+
 header_left, header_right = st.columns([4, 1])
 with header_left:
     st.markdown(
@@ -890,6 +992,9 @@ with header_left:
         unsafe_allow_html=True,
     )
 with header_right:
+    if st.button("Sign out", key="operator-sign-out"):
+        st.session_state.pop("authenticated", None)
+        st.rerun()
     st.markdown(
         f'<p class="radar-no-feed">● NO LIVE AGENCY FEED<br>'
         f'<span style="font-weight:400">{time.strftime("%H:%M")} LOCAL · TN ONLY</span></p>',
@@ -1852,6 +1957,7 @@ def render_live_dashboard():
                 if selected_map_incident is not None
                 else []
             )
+            nearest_map_station = nearby_map_stations[0][0] if nearby_map_stations else None
             map_selection = None
             if selected_map_incident is not None:
                 is_demo = bool(
@@ -1939,6 +2045,16 @@ def render_live_dashboard():
                 overlay=True,
                 show=True,
             ).add_to(radar_map)
+            if selected_map_incident is not None and nearest_map_station is not None:
+                incident_point = [
+                    float(selected_map_incident["latitude"]),
+                    float(selected_map_incident["longitude"]),
+                ]
+                station_point = [
+                    float(nearest_map_station["latitude"]),
+                    float(nearest_map_station["longitude"]),
+                ]
+                folium.PolyLine([incident_point, station_point], color="#51d6ff", weight=2.5, opacity=0.95).add_to(radar_map)
             TacticalTileStyle().add_to(radar_map.get_root())
             outside_mask = {
                 "type": "Feature",
@@ -2617,4 +2733,7 @@ def render_live_dashboard():
                         args=(selected_route_incident_id,),
                     )
 
-render_live_dashboard()
+if dashboard_page == "↗  Crime trend analysis":
+    render_crime_trends_dashboard()
+else:
+    render_live_dashboard()
