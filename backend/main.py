@@ -1,6 +1,7 @@
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from math import ceil
+from math import asin, ceil, cos, radians, sin, sqrt
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -11,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import Base, SessionLocal, engine, get_db
 from .geography import TAMIL_NADU_FEATURE, is_in_tamil_nadu
-from .models import CrimeIncident, PatrolUnit, PoliceStation, SourceSyncStatus
+from .models import (
+    CrimeIncident,
+    IncidentClusterReview,
+    PatrolUnit,
+    PoliceStation,
+    SourceSyncStatus,
+)
 
 
 @asynccontextmanager
@@ -118,6 +125,186 @@ class PoliceStationTelemetry(BaseModel):
 
 class PoliceStationRead(PoliceStationTelemetry):
     model_config = ConfigDict(from_attributes=True)
+
+
+class ClusterReviewUpdate(BaseModel):
+    status: str = Field(min_length=1, max_length=40)
+    review_notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    lat1_rad = radians(lat1)
+    lon1_rad = radians(lon1)
+    lat2_rad = radians(lat2)
+    lon2_rad = radians(lon2)
+    delta_lat = lat2_rad - lat1_rad
+    delta_lon = lon2_rad - lon1_rad
+    a = (
+        sin(delta_lat / 2) ** 2
+        + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
+    )
+    return 2 * 6371 * asin(sqrt(a))
+
+
+def normalize_incident_type(value: Optional[str]) -> str:
+    text = (value or "").strip().lower()
+    if not text:
+        return "uncategorized"
+    aliases = {
+        "assault": "assault",
+        "violence": "assault",
+        "attack": "assault",
+        "robbery": "robbery",
+        "theft": "theft",
+        "burglary": "theft",
+        "vehicle theft": "vehicle theft",
+        "car theft": "vehicle theft",
+        "auto theft": "vehicle theft",
+        "snatching": "theft",
+        "stolen vehicle": "vehicle theft",
+        "harassment": "assault",
+    }
+    return aliases.get(text, text.replace("-", " "))
+
+
+def retrieve_incident_similarity(incident_a, incident_b, radius_km: float, time_window_hours: float) -> tuple[float, list[str]]:
+    reasons: list[str] = []
+    lat_a, lon_a = float(incident_a.latitude), float(incident_a.longitude)
+    lat_b, lon_b = float(incident_b.latitude), float(incident_b.longitude)
+    distance_km = haversine_km(lat_a, lon_a, lat_b, lon_b)
+    if distance_km > radius_km:
+        return 0.0, reasons
+
+    time_delta_hours = abs((incident_a.timestamp - incident_b.timestamp).total_seconds() / 3600)
+    if time_delta_hours > time_window_hours:
+        return 0.0, reasons
+
+    type_a = normalize_incident_type(incident_a.incident_type)
+    type_b = normalize_incident_type(incident_b.incident_type)
+    type_score = 1.0 if type_a == type_b else 0.45 if type_a.split()[0] == type_b.split()[0] else 0.0
+    if type_score <= 0:
+        return 0.0, reasons
+
+    reasons.append(
+        f"Same or related category: {incident_a.incident_type} / {incident_b.incident_type}"
+    )
+    reasons.append(f"Reported within {time_delta_hours:.1f} hours")
+    reasons.append(f"Within {distance_km:.1f} km of each other")
+
+    detail_score = 0.0
+    if incident_a.report_details and incident_b.report_details:
+        words_a = set((incident_a.report_details or "").lower().split())
+        words_b = set((incident_b.report_details or "").lower().split())
+        if words_a and words_b:
+            overlap = len(words_a & words_b) / max(len(words_a | words_b), 1)
+            detail_score = overlap
+            if overlap > 0.12:
+                reasons.append("Shared descriptive details")
+
+    score = (
+        type_score * 0.55
+        + max(1 - (time_delta_hours / max(time_window_hours, 1)), 0.0) * 0.2
+        + min(distance_km / max(radius_km, 1), 1.0) * 0.15
+        + detail_score * 0.1
+    )
+    return round(min(score, 1.0), 3), reasons
+
+
+def cluster_incident_records(incidents: List[CrimeIncident], radius_km: float, time_window_hours: float, similarity_threshold: float, crime_type: Optional[str] = None):
+    valid = []
+    for incident in incidents:
+        if incident.latitude is None or incident.longitude is None or incident.timestamp is None:
+            continue
+        if not is_in_tamil_nadu(float(incident.latitude), float(incident.longitude)):
+            continue
+        if crime_type and normalize_incident_type(incident.incident_type) != normalize_incident_type(crime_type):
+            continue
+        valid.append(incident)
+
+    if len(valid) < 2:
+        return []
+
+    groups: List[List[CrimeIncident]] = []
+    visited = set()
+    for idx, incident in enumerate(valid):
+        if idx in visited:
+            continue
+        cluster_members = [incident]
+        visited.add(idx)
+        for candidate_idx in range(idx + 1, len(valid)):
+            if candidate_idx in visited:
+                continue
+            candidate = valid[candidate_idx]
+            score, reasons = retrieve_incident_similarity(
+                incident,
+                candidate,
+                radius_km=radius_km,
+                time_window_hours=time_window_hours,
+            )
+            if score >= similarity_threshold and reasons:
+                cluster_members.append(candidate)
+                visited.add(candidate_idx)
+        if len(cluster_members) > 1:
+            groups.append(cluster_members)
+
+    # Enforce the user review need: cluster only when incidents are within the
+    # configured radius and the type/date similarity checks both pass.
+    groups = [
+        group for group in groups
+        if len(group) > 1
+        and all(
+            retrieve_incident_similarity(group[0], member, radius_km, time_window_hours)[0]
+            >= similarity_threshold
+            for member in group[1:]
+        )
+    ]
+
+    if not groups:
+        return []
+
+    clean_groups = []
+    for group in groups:
+        grouped_ids = {item.event_id for item in group}
+        if len(grouped_ids) < 2:
+            continue
+        clean_groups.append(sorted(group, key=lambda item: item.timestamp, reverse=True))
+    return clean_groups
+
+
+def build_cluster_summary(group: List[CrimeIncident], cluster_id: str, review_status: str = "NEW"):
+    event_ids = [item.event_id for item in group]
+    cluster_latitude = sum(float(item.latitude) for item in group) / len(group)
+    cluster_longitude = sum(float(item.longitude) for item in group) / len(group)
+    timestamps = [item.timestamp for item in group if item.timestamp is not None]
+    incident_types = [normalize_incident_type(item.incident_type) for item in group]
+    primary_type = max(set(incident_types), key=incident_types.count)
+    summary = {
+        "cluster_id": cluster_id,
+        "crime_type": primary_type.upper(),
+        "incident_count": len(group),
+        "review_status": review_status,
+        "area": f"Lat {cluster_latitude:.4f}, Lon {cluster_longitude:.4f}",
+        "centroid_latitude": round(cluster_latitude, 5),
+        "centroid_longitude": round(cluster_longitude, 5),
+        "start_date": min(timestamps).isoformat() if timestamps else None,
+        "end_date": max(timestamps).isoformat() if timestamps else None,
+        "incident_ids": event_ids,
+        "incidents": [
+            {
+                "event_id": item.event_id,
+                "timestamp": item.timestamp.isoformat() if item.timestamp else None,
+                "latitude": float(item.latitude),
+                "longitude": float(item.longitude),
+                "incident_type": item.incident_type,
+                "status": item.status,
+                "priority": item.priority,
+                "address": item.address,
+                "report_details": item.report_details,
+            }
+            for item in group
+        ],
+    }
+    return summary
 
 
 @app.post("/api/v1/ingest", status_code=201, response_model=dict)
@@ -311,6 +498,157 @@ async def get_crime_trends(
         },
         "incident_types": type_rows,
         "priorities": priority_rows,
+    }
+
+
+@app.get("/api/v1/incident-clusters")
+async def get_incident_clusters(
+    crime_type: Optional[str] = Query(default=None),
+    radius_km: float = Query(default=5.0, ge=0.5, le=50.0),
+    time_window_hours: float = Query(default=24.0, ge=1.0, le=168.0),
+    similarity_threshold: float = Query(default=0.55, ge=0.1, le=1.0),
+    review_status: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.scalars(
+        select(CrimeIncident)
+        .where(CrimeIncident.status != "CLEARED")
+        .where(
+            or_(
+                CrimeIncident.display_after.is_(None),
+                CrimeIncident.display_after <= datetime.utcnow(),
+            )
+        )
+        .order_by(CrimeIncident.timestamp.desc())
+    )
+    incidents = [incident for incident in result.all() if is_in_tamil_nadu(float(incident.latitude), float(incident.longitude))]
+    if not incidents:
+        return {"clusters": [], "demo_mode": True, "message": "No incident records are available in the connected MySQL database."}
+
+    cluster_groups = cluster_incident_records(
+        incidents=incidents,
+        radius_km=radius_km,
+        time_window_hours=time_window_hours,
+        similarity_threshold=similarity_threshold,
+        crime_type=crime_type,
+    )
+
+    clusters = []
+    for index, group in enumerate(cluster_groups, start=1):
+        cluster_id_seed = ",".join(sorted(item.event_id for item in group))
+        cluster_id = "CL-" + hashlib.sha256(cluster_id_seed.encode("utf-8")).hexdigest()[:12].upper()
+        cluster_review = await db.get(IncidentClusterReview, cluster_id)
+        review_status_value = cluster_review.review_status if cluster_review else "NEW"
+        if review_status and review_status_value.lower() != review_status.lower():
+            continue
+        cluster_summary = build_cluster_summary(group, cluster_id, review_status_value)
+        reasons = []
+        for idx, incident in enumerate(group[:-1]):
+            for other in group[idx + 1 :]:
+                score, item_reasons = retrieve_incident_similarity(
+                    incident,
+                    other,
+                    radius_km=radius_km,
+                    time_window_hours=time_window_hours,
+                )
+                if score >= similarity_threshold and item_reasons:
+                    reasons.append(
+                        {
+                            "event_ids": [incident.event_id, other.event_id],
+                            "score": score,
+                            "reasons": item_reasons,
+                        }
+                    )
+        cluster_summary["reasons"] = reasons[:8]
+        cluster_summary["area"] = f"{cluster_summary['centroid_latitude']:.4f}, {cluster_summary['centroid_longitude']:.4f}"
+        cluster_summary["radius_km"] = radius_km
+        cluster_summary["time_window_hours"] = time_window_hours
+        cluster_summary["similarity_threshold"] = similarity_threshold
+        clusters.append(cluster_summary)
+
+    clusters.sort(key=lambda item: (-item["incident_count"], item["cluster_id"]))
+    return {
+        "clusters": clusters,
+        "demo_mode": False,
+        "total_incidents": len(incidents),
+        "total_clusters": len(clusters),
+    }
+
+
+@app.get("/api/v1/incident-clusters/{cluster_id}")
+async def get_incident_cluster_detail(
+    cluster_id: str,
+    radius_km: float = Query(default=5.0, ge=0.5, le=50.0),
+    time_window_hours: float = Query(default=24.0, ge=1.0, le=168.0),
+    similarity_threshold: float = Query(default=0.55, ge=0.1, le=1.0),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.scalars(
+        select(CrimeIncident)
+        .where(CrimeIncident.status != "CLEARED")
+        .where(
+            or_(
+                CrimeIncident.display_after.is_(None),
+                CrimeIncident.display_after <= datetime.utcnow(),
+            )
+        )
+        .order_by(CrimeIncident.timestamp.desc())
+    )
+    incidents = [incident for incident in result.all() if is_in_tamil_nadu(float(incident.latitude), float(incident.longitude))]
+    groups = cluster_incident_records(
+        incidents=incidents,
+        radius_km=radius_km,
+        time_window_hours=time_window_hours,
+        similarity_threshold=similarity_threshold,
+    )
+    for group in groups:
+        candidate_id = "CL-" + hashlib.sha256(
+            ",".join(sorted(item.event_id for item in group)).encode("utf-8")
+        ).hexdigest()[:12].upper()
+        if candidate_id == cluster_id:
+            review = await db.get(IncidentClusterReview, cluster_id)
+            cluster_summary = build_cluster_summary(group, cluster_id, review.review_status if review else "NEW")
+            return {
+                "cluster": cluster_summary,
+                "demo_mode": False,
+            }
+    raise HTTPException(status_code=404, detail="Cluster not found.")
+
+
+@app.post("/api/v1/incident-clusters/{cluster_id}/review")
+async def update_incident_cluster_review(
+    cluster_id: str,
+    review: ClusterReviewUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    allowed_statuses = {"NEW", "UNDER_REVIEW", "REVIEWED", "NEEDS_FURTHER_INVESTIGATION"}
+    normalized_status = review.status.strip().upper()
+    if normalized_status not in allowed_statuses:
+        raise HTTPException(status_code=422, detail="Unsupported review status.")
+
+    row = await db.get(IncidentClusterReview, cluster_id)
+    if row is None:
+        row = IncidentClusterReview(
+            cluster_id=cluster_id,
+            review_status=normalized_status,
+            review_notes=review.review_notes,
+            updated_at=datetime.utcnow(),
+            cluster_summary=f"Review updated to {normalized_status}",
+        )
+        db.add(row)
+    else:
+        row.review_status = normalized_status
+        row.review_notes = review.review_notes
+        row.updated_at = datetime.utcnow()
+        row.cluster_summary = f"Review updated to {normalized_status}"
+
+    await db.commit()
+    await db.refresh(row)
+    return {
+        "cluster_id": row.cluster_id,
+        "review_status": row.review_status,
+        "review_notes": row.review_notes,
+        "updated_at": row.updated_at.isoformat(),
     }
 
 

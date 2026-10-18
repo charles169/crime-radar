@@ -50,3 +50,14 @@ class SourceSyncStatus(Base):
     records_loaded = Column(Integer, nullable=False, default=0)
     data_through = Column(DateTime, nullable=True)
     error = Column(String(1000), nullable=True)
+
+
+class IncidentClusterReview(Base):
+    __tablename__ = "incident_cluster_reviews"
+
+    cluster_id = Column(String(64), primary_key=True, index=True)
+    review_status = Column(String(40), nullable=False, default="NEW")
+    reviewed_by = Column(String(120), nullable=True)
+    review_notes = Column(String(1000), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    cluster_summary = Column(String(250), nullable=True)

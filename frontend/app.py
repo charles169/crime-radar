@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import hmac
 import html
 import json
@@ -466,6 +467,174 @@ def display_incident_time(value):
     return local_time.strftime("%d %b %Y, %I:%M %p IST")
 
 
+def render_complaint_tracking():
+    st.markdown(
+        '<p class="radar-analytics-heading">COMPLAINT TRACKING</p>'
+        '<h1 class="radar-page-heading">Track Your Complaint</h1>'
+        '<p class="radar-page-copy">Browse existing simulated incident records '
+        'and their demonstration complaint statuses.</p>',
+        unsafe_allow_html=True,
+    )
+    st.info(
+        "DEMO DATA ONLY — statuses and action messages are examples. "
+        "They are not saved and do not represent verified reports or police action."
+    )
+
+    records = st.session_state.get("dashboard_incidents_for_tracking", [])
+    statuses = (
+        "Submitted",
+        "Under Review",
+        "Investigation in Progress",
+        "Action Taken",
+        "Resolved",
+    )
+    actions = {
+        "Submitted": "Complaint registered successfully.",
+        "Under Review": "Complaint is being reviewed.",
+        "Investigation in Progress": "Investigation is ongoing (demo status only).",
+        "Action Taken": "A demo action update has been recorded.",
+        "Resolved": "Complaint marked as resolved (demo status only).",
+    }
+    badge_colors = {
+        "Submitted": "#4c9dff",
+        "Under Review": "#f0a33a",
+        "Investigation in Progress": "#b58cff",
+        "Action Taken": "#48c774",
+        "Resolved": "#35c9c1",
+    }
+
+    complaints = []
+    for record in records:
+        if not is_training_status(record.get("status", "")):
+            continue
+        complaint_id = str(record.get("event_id") or "").strip()
+        if not complaint_id:
+            continue
+        status_index = int.from_bytes(
+            hashlib.sha256(complaint_id.encode("utf-8")).digest()[:4],
+            "big",
+        ) % len(statuses)
+        status = statuses[status_index]
+        complaints.append(
+            {
+                "reference": str(record.get("id") or complaint_id),
+                "complaint_id": complaint_id,
+                "title": str(record.get("incident_type") or "Demo incident"),
+                "date": record.get("timestamp"),
+                "location": str(record.get("address") or "Not available"),
+                "status": status,
+                "action": actions[status],
+                "details": str(record.get("report_details") or ""),
+            }
+        )
+
+    if not complaints:
+        st.info(
+            "No existing dummy complaint records are available. Visit Live "
+            "Operations first to load the dashboard's existing incident records."
+        )
+        return
+
+    search = st.text_input(
+        "Search by Complaint ID or title",
+        key="track-complaints-search",
+        placeholder="Enter an ID or complaint title",
+    ).strip().casefold()
+    status_filter = st.selectbox(
+        "Filter by status",
+        ("All statuses", *statuses),
+        key="track-complaints-status-filter",
+    )
+    filtered = [
+        complaint for complaint in complaints
+        if (
+            not search
+            or search in complaint["complaint_id"].casefold()
+            or search in complaint["title"].casefold()
+        )
+        and (
+            status_filter == "All statuses"
+            or complaint["status"] == status_filter
+        )
+    ]
+    st.caption(f"Showing {len(filtered)} of {len(complaints)} existing demo records.")
+    if not filtered:
+        st.info("No complaints match the current search and status filter.")
+        return
+
+    table = pd.DataFrame(
+        [
+            {
+                "Incident Reference": complaint["reference"],
+                "Incident Type": complaint["title"],
+                "Recorded At": display_incident_time(complaint["date"]),
+                "Complaint ID": complaint["complaint_id"],
+                "Complaint Status": complaint["status"],
+            }
+            for complaint in filtered
+        ]
+    )
+    st.dataframe(table, hide_index=True, use_container_width=True)
+
+    labels = {
+        item["complaint_id"]: f'{item["complaint_id"]} · {item["status"]}'
+        for item in filtered
+    }
+    selected_id = st.selectbox(
+        "Select a complaint to view details",
+        [item["complaint_id"] for item in filtered],
+        format_func=labels.get,
+        key="track-complaints-selected",
+    )
+    selected = next(
+        item for item in filtered if item["complaint_id"] == selected_id
+    )
+    st.markdown(
+        f'<div style="padding:18px;margin:12px 0;background:#0a1927;'
+        f'border:1px solid #1b3a4d;border-radius:8px">'
+        f'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        f'<h3 style="margin:0;color:#e3edf5">{html.escape(selected["title"])}</h3>'
+        f'<span style="padding:5px 11px;border-radius:999px;color:#07111d;'
+        f'background:{badge_colors[selected["status"]]};font-weight:700">'
+        f'{html.escape(selected["status"])} · DEMO</span></div></div>',
+        unsafe_allow_html=True,
+    )
+    detail_columns = st.columns(2)
+    detail_columns[0].markdown(
+        f'**Complaint ID**  \n{html.escape(selected["complaint_id"])}'
+    )
+    detail_columns[1].markdown(
+        f'**Complaint date**  \n'
+        f'{html.escape(display_incident_time(selected["date"]))}'
+    )
+    detail_columns[0].markdown(
+        f'**Location**  \n{html.escape(selected["location"])}'
+    )
+    detail_columns[1].markdown(
+        f'**Action taken · DEMO**  \n{html.escape(selected["action"])}'
+    )
+    if selected["details"]:
+        st.markdown(f'**Available details**  \n{html.escape(selected["details"])}')
+
+    st.markdown("#### Complaint progress · demonstration")
+    current_index = statuses.index(selected["status"])
+    for index, status in enumerate(statuses):
+        marker = "✓" if index < current_index else "●" if index == current_index else "○"
+        label = (
+            "Demo step" if index < current_index
+            else "Current demo status" if index == current_index
+            else "Next example step"
+        )
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:10px;'
+            f'min-height:36px;padding-left:4px;color:#d7e4ef">'
+            f'<span style="color:{badge_colors[status]};font-size:1.15rem">'
+            f'{marker}</span><strong>{html.escape(status)}</strong>'
+            f'<span style="color:#8faabd;font-size:.82rem">{label}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+
 def incident_hud_html(incident, extra_html="", is_active=False):
     status = str(incident.get("status", "UNKNOWN"))
     is_demo = bool(incident.get("is_demo", is_training_status(status)))
@@ -835,6 +1004,37 @@ st.markdown(
         font-size: .86rem;
         letter-spacing: .09em;
     }
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.related-incident-heading) {
+        background: linear-gradient(145deg, #102438, #0a1725);
+        border: 1px solid #24465b;
+        border-left: 3px solid #2ab9ce;
+        border-radius: 10px;
+        padding: 12px 14px 8px;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, .16);
+    }
+    .related-incident-heading {
+        align-items: center;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0 0 8px;
+    }
+    .related-incident-type {
+        color: #67d6e5;
+        font-size: .9rem;
+        font-weight: 750;
+        margin: 0;
+    }
+    .related-incident-count {
+        background: #12384a;
+        border: 1px solid #27647a;
+        border-radius: 999px;
+        color: #d7e4ef;
+        flex: 0 0 auto;
+        font-size: .72rem;
+        font-weight: 700;
+        padding: 4px 9px;
+    }
     .radar-analytics-heading {
         color: #67d6e5;
         font-size: .72rem;
@@ -1005,11 +1205,463 @@ st.divider()
 
 dashboard_page = st.radio(
     "Dashboard",
-    options=["◉  Live operations", "↗  Crime trend analysis"],
+    options=[
+        "◉  Live operations",
+        "↗  Crime trend analysis",
+        "▤  Track Complaint",
+        "◈  Related crime incidents",
+    ],
     horizontal=True,
     label_visibility="collapsed",
     key="command-center-page",
 )
+
+
+def render_related_incidents():
+    st.markdown(
+        '<p class="radar-analytics-heading">CRIME INTELLIGENCE</p>'
+        '<h1 class="radar-page-heading">Related crime incidents</h1>'
+        '<p class="radar-page-copy">Review incidents of the same crime type and when they were reported.</p>',
+        unsafe_allow_html=True,
+    )
+    st.button("Refresh incident list", key="refresh-related-incidents")
+
+    try:
+        incidents = get_json("/api/v1/active-incidents")
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        st.error(f"Incident records unavailable: {exc}")
+        return
+
+    if not incidents:
+        st.info("No active incident records are available.")
+        return
+
+    incidents = [
+        incident
+        for incident in incidents
+        if not is_training_status(incident.get("status", ""))
+    ]
+    if not incidents:
+        st.info("No non-demo incident records are available.")
+        return
+
+    incident_df = pd.DataFrame(incidents)
+    required_columns = {"event_id", "incident_type", "timestamp"}
+    if not required_columns.issubset(incident_df.columns):
+        st.error("The incident service returned records without the required incident type, ID, or date fields.")
+        return
+
+    incident_df["timestamp"] = pd.to_datetime(incident_df["timestamp"], errors="coerce")
+    incident_df = incident_df.dropna(subset=["timestamp"]).copy()
+    incident_df["incident_type"] = incident_df["incident_type"].fillna("Unclassified")
+    incident_df = incident_df.sort_values("timestamp", ascending=False)
+
+    incident_types = sorted(incident_df["incident_type"].astype(str).unique())
+    selected_type = st.selectbox(
+        "Crime type",
+        ["All types", *incident_types],
+        key="related-incidents-crime-type",
+    )
+    if selected_type != "All types":
+        incident_df = incident_df[incident_df["incident_type"].astype(str) == selected_type]
+
+    st.metric("Incidents shown", len(incident_df))
+    display_columns = {
+        "event_id": "Incident ID",
+        "incident_type": "Crime type",
+        "timestamp": "Reported date and time",
+        "address": "Location",
+        "status": "Status",
+    }
+    for incident_type, related_df in incident_df.groupby("incident_type", sort=True):
+        with st.container(border=True):
+            st.markdown(
+                '<div class="related-incident-heading">'
+                f'<h3 class="related-incident-type">{html.escape(str(incident_type))}</h3>'
+                f'<span class="related-incident-count">{len(related_df)} incidents</span>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            display_df = related_df.reindex(columns=display_columns.keys()).rename(
+                columns=display_columns
+            )
+            display_df["Reported date and time"] = display_df[
+                "Reported date and time"
+            ].dt.strftime("%Y-%m-%d %H:%M")
+            st.dataframe(display_df, hide_index=True, use_container_width=True)
+
+
+def normalize_cluster_type(value):
+    text = str(value or "").strip().upper()
+    aliases = {
+        "ASSAULT": "ASSAULT",
+        "ROBBERY": "ROBBERY",
+        "THEFT": "THEFT",
+        "VEHICLE THEFT": "VEHICLE THEFT",
+        "CAR THEFT": "VEHICLE THEFT",
+        "AUTO THEFT": "VEHICLE THEFT",
+        "BURGLARY": "THEFT",
+        "SNATCHING": "THEFT",
+        "HARASSMENT": "ASSAULT",
+    }
+    return aliases.get(text, text or "OTHER")
+
+
+def haversine_km_between(lat1, lon1, lat2, lon2):
+    lat1_rad = radians(lat1)
+    lon1_rad = radians(lon1)
+    lat2_rad = radians(lat2)
+    lon2_rad = radians(lon2)
+    delta_lat = lat2_rad - lat1_rad
+    delta_lon = lon2_rad - lon1_rad
+    a = (
+        sin(delta_lat / 2) ** 2
+        + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
+    )
+    return 2 * 6371 * asin(sqrt(a))
+
+
+def build_live_cluster_payload(incidents, filters):
+    if not incidents:
+        return {"clusters": [], "demo_mode": False, "message": "No live incidents available.", "total_incidents": 0, "total_clusters": 0}
+
+    radius_km = float(filters.get("radius_km", 5.0))
+    time_window_hours = float(filters.get("time_window_hours", 24.0))
+    similarity_threshold = float(filters.get("similarity_threshold", 0.55))
+    crime_type_filter = filters.get("crime_type")
+
+    normalized_incidents = []
+    for record in incidents:
+        try:
+            lat = float(record.get("latitude"))
+            lon = float(record.get("longitude"))
+        except (TypeError, ValueError):
+            continue
+        timestamp_value = pd.to_datetime(record.get("timestamp"), errors="coerce")
+        if pd.isna(timestamp_value):
+            continue
+        incident_type = normalize_cluster_type(record.get("incident_type") or record.get("crime_type") or "OTHER")
+        if crime_type_filter and incident_type != crime_type_filter:
+            continue
+        normalized_incidents.append(
+            {
+                "event_id": str(record.get("event_id") or record.get("id") or "UNKNOWN"),
+                "incident_type": incident_type,
+                "status": str(record.get("status") or "ACTIVE_DISPATCH"),
+                "priority": str(record.get("priority") or "UNKNOWN"),
+                "address": str(record.get("address") or "Location unavailable"),
+                "timestamp": timestamp_value.to_pydatetime(),
+                "latitude": lat,
+                "longitude": lon,
+                "report_details": str(record.get("report_details") or ""),
+            }
+        )
+
+    if len(normalized_incidents) < 2:
+        return {"clusters": [], "demo_mode": False, "message": "Not enough valid incident records to cluster.", "total_incidents": len(normalized_incidents), "total_clusters": 0}
+
+    clusters = []
+    visited = set()
+    for index, incident in enumerate(normalized_incidents):
+        if index in visited:
+            continue
+        cluster_members = [incident]
+        visited.add(index)
+        for candidate_index in range(index + 1, len(normalized_incidents)):
+            if candidate_index in visited:
+                continue
+            candidate = normalized_incidents[candidate_index]
+            distance_km = haversine_km_between(incident["latitude"], incident["longitude"], candidate["latitude"], candidate["longitude"])
+            if distance_km > radius_km:
+                continue
+            hours_delta = abs((incident["timestamp"] - candidate["timestamp"]).total_seconds() / 3600)
+            if hours_delta > time_window_hours:
+                continue
+            same_type = incident["incident_type"] == candidate["incident_type"]
+            if not same_type:
+                continue
+            match_score = 1.0 if same_type else 0.0
+            if match_score < similarity_threshold:
+                continue
+            cluster_members.append(candidate)
+            visited.add(candidate_index)
+        if len(cluster_members) > 1:
+            clusters.append(cluster_members)
+
+    cluster_payload = []
+    for cluster_index, group in enumerate(clusters, start=1):
+        centroid_lat = sum(item["latitude"] for item in group) / len(group)
+        centroid_lon = sum(item["longitude"] for item in group) / len(group)
+        sorted_group = sorted(group, key=lambda item: item["timestamp"], reverse=True)
+        cluster_id = f"CL-{cluster_index:03d}"
+        reasons = []
+        for left_index, left in enumerate(sorted_group[:-1]):
+            for right in sorted_group[left_index + 1 :]:
+                distance_km = haversine_km_between(left["latitude"], left["longitude"], right["latitude"], right["longitude"])
+                hours_delta = abs((left["timestamp"] - right["timestamp"]).total_seconds() / 3600)
+                if distance_km <= radius_km and hours_delta <= time_window_hours and left["incident_type"] == right["incident_type"]:
+                    reasons.append(
+                        {
+                            "event_ids": [left["event_id"], right["event_id"]],
+                            "score": round(min(1.0, max(0.55, 1.0 - (distance_km / max(radius_km, 1.0)) * 0.2 - (hours_delta / max(time_window_hours, 1.0)) * 0.15)), 2),
+                            "reasons": [
+                                f"Same type: {left['incident_type']}",
+                                f"Within {distance_km:.1f} km",
+                                f"Reported within {hours_delta:.1f} hours",
+                            ],
+                        }
+                    )
+        cluster_payload.append(
+            {
+                "cluster_id": cluster_id,
+                "crime_type": group[0]["incident_type"],
+                "incident_count": len(group),
+                "review_status": "NEW",
+                "area": f"{centroid_lat:.4f}, {centroid_lon:.4f}",
+                "centroid_latitude": round(centroid_lat, 5),
+                "centroid_longitude": round(centroid_lon, 5),
+                "start_date": min(item["timestamp"] for item in sorted_group).isoformat(),
+                "end_date": max(item["timestamp"] for item in sorted_group).isoformat(),
+                "incident_ids": [item["event_id"] for item in sorted_group],
+                "incidents": [
+                    {
+                        "event_id": item["event_id"],
+                        "timestamp": item["timestamp"].isoformat(),
+                        "latitude": item["latitude"],
+                        "longitude": item["longitude"],
+                        "incident_type": item["incident_type"],
+                        "status": item["status"],
+                        "priority": item["priority"],
+                        "address": item["address"],
+                        "report_details": item["report_details"],
+                    }
+                    for item in sorted_group
+                ],
+                "reasons": reasons[:5],
+            }
+        )
+
+    return {
+        "clusters": cluster_payload,
+        "demo_mode": False,
+        "message": "Live incident data loaded.",
+        "total_incidents": len(normalized_incidents),
+        "total_clusters": len(cluster_payload),
+    }
+
+
+def fetch_incident_clusters(filters):
+    live_incidents = st.session_state.get("dashboard_incidents_for_tracking", [])
+    if not live_incidents:
+        try:
+            live_incidents = get_json("/api/v1/active-incidents")
+            st.session_state["dashboard_incidents_for_tracking"] = live_incidents
+        except (requests.RequestException, ValueError, KeyError, TypeError):
+            live_incidents = []
+
+    if live_incidents:
+        return build_live_cluster_payload(live_incidents, filters), False
+
+    try:
+        payload = get_json("/api/v1/incident-clusters", params=filters)
+        if isinstance(payload, dict) and payload.get("clusters"):
+            return payload, False
+        if isinstance(payload, dict):
+            return payload, payload.get("demo_mode", False)
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        pass
+
+    return {
+        "clusters": [
+            {
+                "cluster_id": "DEMO-CL-001",
+                "crime_type": "THEFT",
+                "incident_count": 3,
+                "review_status": "NEW",
+                "area": "13.0910, 80.2650",
+                "centroid_latitude": 13.0910,
+                "centroid_longitude": 80.2650,
+                "start_date": "2026-10-16T10:55:00",
+                "end_date": "2026-10-17T01:15:00",
+                "incident_ids": ["DEMO-CASE-100", "DEMO-CASE-101", "DEMO-CASE-102"],
+                "incidents": [
+                    {"event_id": "DEMO-CASE-100", "timestamp": "2026-10-16T10:55:00", "incident_type": "THEFT", "address": "Mylapore", "status": "ACTIVE_DISPATCH", "priority": "HIGH", "latitude": 13.0910, "longitude": 80.2650, "report_details": "Cash bag reported missing near station exit."},
+                    {"event_id": "DEMO-CASE-101", "timestamp": "2026-10-16T12:10:00", "incident_type": "THEFT", "address": "Mylapore", "status": "ACTIVE_DISPATCH", "priority": "HIGH", "latitude": 13.0940, "longitude": 80.2680, "report_details": "Mobile phone snatched by two suspects."},
+                    {"event_id": "DEMO-CASE-102", "timestamp": "2026-10-17T01:15:00", "incident_type": "THEFT", "address": "Mylapore", "status": "ACTIVE_DISPATCH", "priority": "HIGH", "latitude": 13.0885, "longitude": 80.2618, "report_details": "Bag stolen from a parked scooter."},
+                ],
+                "reasons": [{"event_ids": ["DEMO-CASE-100", "DEMO-CASE-101"], "score": 0.82, "reasons": ["Same or related category: THEFT / THEFT", "Within 1.6 km of each other", "Reported within 1.3 hours"]}],
+            }
+        ],
+        "demo_mode": True,
+        "message": "Connected incident data unavailable — showing demonstration clusters only.",
+        "total_incidents": 3,
+        "total_clusters": 1,
+    }, True
+
+
+def render_incident_clustering_dashboard():
+    st.markdown(
+        '<p class="radar-analytics-heading">CRIME INTELLIGENCE</p>'
+        '<h1 class="radar-page-heading">Incident clustering</h1>'
+        '<p class="radar-page-copy">Group nearby related incidents by location, crime type, and reporting window to surface possible investigative leads.</p>',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True):
+        cluster_filters = {}
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            cluster_filters["crime_type"] = st.selectbox(
+                "Crime type",
+                ["All types", "THEFT", "ROBBERY", "ASSAULT", "VEHICLE THEFT"],
+                index=0,
+            )
+        with col2:
+            cluster_filters["radius_km"] = st.slider(
+                "Radius (km)",
+                min_value=1.0,
+                max_value=20.0,
+                value=5.0,
+                step=0.5,
+            )
+        with col3:
+            cluster_filters["time_window_hours"] = st.slider(
+                "Time window (hrs)",
+                min_value=2,
+                max_value=72,
+                value=24,
+                step=2,
+            )
+        with col4:
+            cluster_filters["similarity_threshold"] = st.slider(
+                "Similarity",
+                min_value=0.1,
+                max_value=1.0,
+                value=0.55,
+                step=0.05,
+            )
+
+        if st.button("Refresh cluster review list", use_container_width=True, type="primary"):
+            st.rerun()
+
+    if cluster_filters["crime_type"] != "All types":
+        cluster_filters["crime_type"] = cluster_filters["crime_type"]
+    else:
+        cluster_filters["crime_type"] = None
+    cluster_filters["review_status"] = None
+
+    with st.spinner("Scanning incident records and forming clusters..."):
+        response, demo_mode = fetch_incident_clusters(cluster_filters)
+
+    if response.get("demo_mode"):
+        st.caption(response.get("message", "No live incident records were available; sample clusters are shown for demonstration."))
+
+    clusters = response.get("clusters", [])
+    total_incidents = response.get("total_incidents", sum(cluster.get("incident_count", 0) for cluster in clusters))
+    awaiting_review = sum(1 for cluster in clusters if cluster.get("review_status") in {"NEW", "UNDER_REVIEW"})
+    recently_updated = max(0, len(clusters))
+
+    overview = st.columns(4)
+    overview[0].metric("Total incidents", total_incidents)
+    overview[1].metric("Detected clusters", len(clusters))
+    overview[2].metric("Awaiting review", awaiting_review)
+    overview[3].metric("Recently updated", recently_updated)
+
+    if not clusters:
+        st.info("No clusters matched the current filters. Adjust the crime type, radius, or time window and retry.")
+        return
+
+    selected_cluster_id = st.selectbox(
+        "Cluster focus",
+        [cluster["cluster_id"] for cluster in clusters],
+        format_func=lambda cluster_id: f"{cluster_id} · {next((item['crime_type'] for item in clusters if item['cluster_id'] == cluster_id), 'Cluster')}",
+        key="incident-cluster-select",
+    )
+    selected_cluster = next((cluster for cluster in clusters if cluster["cluster_id"] == selected_cluster_id), clusters[0])
+
+    map_center = [selected_cluster.get("centroid_latitude", 13.09), selected_cluster.get("centroid_longitude", 80.27)]
+    m = folium.Map(location=map_center, zoom_start=10, tiles="Cartodb dark_matter")
+    status_colors = {
+        "NEW": "#52c7ff",
+        "UNDER_REVIEW": "#ffb347",
+        "REVIEWED": "#49d38d",
+        "NEEDS_FURTHER_INVESTIGATION": "#ff6272",
+    }
+    for cluster in clusters:
+        fill_color = status_colors.get(cluster.get("review_status", "NEW"), "#52c7ff")
+        folium.CircleMarker(
+            location=[cluster.get("centroid_latitude", map_center[0]), cluster.get("centroid_longitude", map_center[1])],
+            radius=max(12, min(28, cluster.get("incident_count", 1) * 6)),
+            popup=f"{cluster['cluster_id']} · {cluster['crime_type']} ({cluster['incident_count']} incidents)",
+            color=fill_color,
+            fill=True,
+            fill_opacity=0.22,
+            weight=2,
+        ).add_to(m)
+        for incident in cluster.get("incidents", []):
+            folium.Marker(
+                [incident.get("latitude", map_center[0]), incident.get("longitude", map_center[1])],
+                popup=f"{incident.get('event_id')} · {incident.get('incident_type')} · {incident.get('status')}",
+                icon=folium.Icon(color="lightred", icon="info-sign"),
+            ).add_to(m)
+
+    st.markdown("#### Cluster map")
+    components.html(m.get_root().render(), height=480, scrolling=False)
+
+    table_rows = []
+    for cluster in clusters:
+        table_rows.append(
+            {
+                "Cluster ID": cluster["cluster_id"],
+                "Crime type": cluster["crime_type"],
+                "Incidents": cluster["incident_count"],
+                "Area": cluster.get("area", "Unknown"),
+                "Date range": f"{cluster.get('start_date','-')[:10]} to {cluster.get('end_date','-')[:10]}",
+                "Status": cluster.get("review_status", "NEW"),
+            }
+        )
+    table_df = pd.DataFrame(table_rows)
+    st.dataframe(table_df, hide_index=True, use_container_width=True)
+
+    detail_col, review_col = st.columns([1.8, 1.2])
+    with detail_col:
+        st.markdown("#### Cluster review")
+        st.markdown(f"**Cluster:** {selected_cluster['cluster_id']}")
+        st.markdown(f"**Primary type:** {selected_cluster['crime_type']}")
+        st.markdown(f"**Reports in cluster:** {selected_cluster['incident_count']}")
+        st.markdown(f"**Area:** {selected_cluster.get('area', 'Unknown')}")
+        st.markdown(f"**Date window:** {selected_cluster.get('start_date', '-')[:10]} to {selected_cluster.get('end_date', '-')[:10]}")
+        st.markdown("**Why these reports were grouped**")
+        for item in selected_cluster.get("reasons", [])[:5]:
+            st.markdown(f"- {item['score']:.2f} match · {', '.join(item.get('reasons', []))}")
+        st.markdown("**Reports in this cluster**")
+        for incident in selected_cluster.get("incidents", []):
+            st.markdown(
+                f"- {incident.get('event_id')} · {incident.get('timestamp', 'unknown')} · {incident.get('incident_type', 'unclassified')} · {incident.get('address', 'unknown')}"
+            )
+
+    with review_col:
+        st.markdown("#### Review status")
+        review_status = selected_cluster.get("review_status", "NEW")
+        st.info(f"Current status: {review_status}")
+        for label, value in [
+            ("Under review", "UNDER_REVIEW"),
+            ("Reviewed", "REVIEWED"),
+            ("Needs further investigation", "NEEDS_FURTHER_INVESTIGATION"),
+        ]:
+            if st.button(label, key=f"cluster-review-{selected_cluster_id}-{value}", use_container_width=True):
+                try:
+                    response = requests.post(
+                        f"{API_URL}/api/v1/incident-clusters/{selected_cluster_id}/review",
+                        json={"status": value, "review_notes": f"Operator review: {label}"},
+                        timeout=5,
+                    )
+                    response.raise_for_status()
+                    st.success(f"Cluster status updated to {value}.")
+                    st.rerun()
+                except requests.RequestException as exc:
+                    st.error(f"Review update failed: {exc}")
+
 
 def render_crime_trends_dashboard():
     st.markdown(
@@ -1222,6 +1874,9 @@ def render_live_dashboard():
     except (requests.RequestException, ValueError, KeyError) as exc:
         incidents_data, units_data, police_stations = [], [], []
         data_error = str(exc)
+
+    if not data_error:
+        st.session_state["dashboard_incidents_for_tracking"] = incidents_data
 
     if data_error:
         st.error(f"Telemetry service unavailable: {data_error}")
@@ -2735,5 +3390,9 @@ def render_live_dashboard():
 
 if dashboard_page == "↗  Crime trend analysis":
     render_crime_trends_dashboard()
+elif dashboard_page == "▤  Track Complaint":
+    render_complaint_tracking()
+elif dashboard_page == "◈  Related crime incidents":
+    render_related_incidents()
 else:
     render_live_dashboard()
