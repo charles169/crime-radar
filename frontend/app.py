@@ -431,7 +431,7 @@ def display_incident_time(value):
 def render_crime_risk_zones():
     st.markdown(
         '<p class="radar-analytics-heading">REPORTED CRIME RISK</p>'
-        '<h1 class="radar-page-heading">Crime risk zones</h1>'
+        '<h1 class="radar-page-heading radar-risk-page-title">Crime risk zones</h1>'
         '<p class="radar-page-copy">Existing reports grouped by area. '
         'Risk levels are relative to the observed report counts, not predictions.</p>',
         unsafe_allow_html=True,
@@ -507,7 +507,7 @@ def render_crime_risk_zones():
 def render_complaint_tracking():
     st.markdown(
         '<p class="radar-analytics-heading">COMPLAINT TRACKING</p>'
-        '<h1 class="radar-page-heading">Track Your Complaint</h1>'
+        '<h1 class="radar-page-heading radar-complaint-page-title">Track Your Complaint</h1>'
         '<p class="radar-page-copy">Browse existing simulated incident records '
         'and their demonstration complaint statuses.</p>',
         unsafe_allow_html=True,
@@ -856,6 +856,18 @@ st.markdown(
     .radar-risk-area strong { overflow-wrap: anywhere; }
     .radar-risk-area span { color: #86a4b8; white-space: nowrap; }
     .radar-risk-empty { color: #86a4b8; font-size: .82rem; }
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.radar-risk-page-title) {
+        background: linear-gradient(145deg, #0c2235, #091522 75%);
+        border: 1px solid #24566a; border-top: 3px solid #45c6d8;
+        border-radius: 12px; padding: 18px 20px;
+        box-shadow: 0 8px 24px rgba(69, 198, 216, .08);
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.radar-complaint-page-title) {
+        background: linear-gradient(145deg, #0c2235, #091522 75%);
+        border: 1px solid #24566a; border-top: 3px solid #45c6d8;
+        border-radius: 12px; padding: 18px 20px;
+        box-shadow: 0 8px 24px rgba(69, 198, 216, .08);
+    }
     div[data-testid="stVerticalBlockBorderWrapper"]:has(.incident-hud-content) {
         background: linear-gradient(145deg, #0c2235, #081523 75%);
         border: 1px solid #287f96; border-radius: 6px; padding: 10px 12px;
@@ -2888,8 +2900,10 @@ def render_live_dashboard():
                     )
 
 if dashboard_page == "▤  Track Complaint":
-    render_complaint_tracking()
+    with st.container(border=True):
+        render_complaint_tracking()
 elif dashboard_page == "◈  Crime risk zones":
-    render_crime_risk_zones()
+    with st.container(border=True):
+        render_crime_risk_zones()
 else:
     render_live_dashboard()
