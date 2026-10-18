@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import html
 import json
 import os
@@ -425,6 +426,174 @@ def display_incident_time(value):
         timezone(timedelta(hours=5, minutes=30))
     )
     return local_time.strftime("%d %b %Y, %I:%M %p IST")
+
+
+def render_complaint_tracking():
+    st.markdown(
+        '<p class="radar-analytics-heading">COMPLAINT TRACKING</p>'
+        '<h1 class="radar-page-heading">Track Your Complaint</h1>'
+        '<p class="radar-page-copy">Browse existing simulated incident records '
+        'and their demonstration complaint statuses.</p>',
+        unsafe_allow_html=True,
+    )
+    st.info(
+        "DEMO DATA ONLY — statuses and action messages are examples. "
+        "They are not saved and do not represent verified reports or police action."
+    )
+
+    records = st.session_state.get("dashboard_incidents_for_tracking", [])
+    statuses = (
+        "Submitted",
+        "Under Review",
+        "Investigation in Progress",
+        "Action Taken",
+        "Resolved",
+    )
+    actions = {
+        "Submitted": "Complaint registered successfully.",
+        "Under Review": "Complaint is being reviewed.",
+        "Investigation in Progress": "Investigation is ongoing (demo status only).",
+        "Action Taken": "A demo action update has been recorded.",
+        "Resolved": "Complaint marked as resolved (demo status only).",
+    }
+    badge_colors = {
+        "Submitted": "#4c9dff",
+        "Under Review": "#f0a33a",
+        "Investigation in Progress": "#b58cff",
+        "Action Taken": "#48c774",
+        "Resolved": "#35c9c1",
+    }
+
+    complaints = []
+    for record in records:
+        if not is_training_status(record.get("status", "")):
+            continue
+        complaint_id = str(record.get("event_id") or "").strip()
+        if not complaint_id:
+            continue
+        status_index = int.from_bytes(
+            hashlib.sha256(complaint_id.encode("utf-8")).digest()[:4],
+            "big",
+        ) % len(statuses)
+        status = statuses[status_index]
+        complaints.append(
+            {
+                "reference": str(record.get("id") or complaint_id),
+                "complaint_id": complaint_id,
+                "title": str(record.get("incident_type") or "Demo incident"),
+                "date": record.get("timestamp"),
+                "location": str(record.get("address") or "Not available"),
+                "status": status,
+                "action": actions[status],
+                "details": str(record.get("report_details") or ""),
+            }
+        )
+
+    if not complaints:
+        st.info(
+            "No existing dummy complaint records are available. Visit Live "
+            "Operations first to load the dashboard's existing incident records."
+        )
+        return
+
+    search = st.text_input(
+        "Search by Complaint ID or title",
+        key="track-complaints-search",
+        placeholder="Enter an ID or complaint title",
+    ).strip().casefold()
+    status_filter = st.selectbox(
+        "Filter by status",
+        ("All statuses", *statuses),
+        key="track-complaints-status-filter",
+    )
+    filtered = [
+        complaint for complaint in complaints
+        if (
+            not search
+            or search in complaint["complaint_id"].casefold()
+            or search in complaint["title"].casefold()
+        )
+        and (
+            status_filter == "All statuses"
+            or complaint["status"] == status_filter
+        )
+    ]
+    st.caption(f"Showing {len(filtered)} of {len(complaints)} existing demo records.")
+    if not filtered:
+        st.info("No complaints match the current search and status filter.")
+        return
+
+    table = pd.DataFrame(
+        [
+            {
+                "Incident Reference": complaint["reference"],
+                "Incident Type": complaint["title"],
+                "Recorded At": display_incident_time(complaint["date"]),
+                "Complaint ID": complaint["complaint_id"],
+                "Complaint Status": complaint["status"],
+            }
+            for complaint in filtered
+        ]
+    )
+    st.dataframe(table, hide_index=True, use_container_width=True)
+
+    labels = {
+        item["complaint_id"]: f'{item["complaint_id"]} · {item["status"]}'
+        for item in filtered
+    }
+    selected_id = st.selectbox(
+        "Select a complaint to view details",
+        [item["complaint_id"] for item in filtered],
+        format_func=labels.get,
+        key="track-complaints-selected",
+    )
+    selected = next(
+        item for item in filtered if item["complaint_id"] == selected_id
+    )
+    st.markdown(
+        f'<div style="padding:18px;margin:12px 0;background:#0a1927;'
+        f'border:1px solid #1b3a4d;border-radius:8px">'
+        f'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        f'<h3 style="margin:0;color:#e3edf5">{html.escape(selected["title"])}</h3>'
+        f'<span style="padding:5px 11px;border-radius:999px;color:#07111d;'
+        f'background:{badge_colors[selected["status"]]};font-weight:700">'
+        f'{html.escape(selected["status"])} · DEMO</span></div></div>',
+        unsafe_allow_html=True,
+    )
+    detail_columns = st.columns(2)
+    detail_columns[0].markdown(
+        f'**Complaint ID**  \n{html.escape(selected["complaint_id"])}'
+    )
+    detail_columns[1].markdown(
+        f'**Complaint date**  \n'
+        f'{html.escape(display_incident_time(selected["date"]))}'
+    )
+    detail_columns[0].markdown(
+        f'**Location**  \n{html.escape(selected["location"])}'
+    )
+    detail_columns[1].markdown(
+        f'**Action taken · DEMO**  \n{html.escape(selected["action"])}'
+    )
+    if selected["details"]:
+        st.markdown(f'**Available details**  \n{html.escape(selected["details"])}')
+
+    st.markdown("#### Complaint progress · demonstration")
+    current_index = statuses.index(selected["status"])
+    for index, status in enumerate(statuses):
+        marker = "✓" if index < current_index else "●" if index == current_index else "○"
+        label = (
+            "Demo step" if index < current_index
+            else "Current demo status" if index == current_index
+            else "Next example step"
+        )
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:10px;'
+            f'min-height:36px;padding-left:4px;color:#d7e4ef">'
+            f'<span style="color:{badge_colors[status]};font-size:1.15rem">'
+            f'{marker}</span><strong>{html.escape(status)}</strong>'
+            f'<span style="color:#8faabd;font-size:.82rem">{label}</span></div>',
+            unsafe_allow_html=True,
+        )
 
 
 def incident_hud_html(incident, extra_html="", is_active=False):
@@ -900,7 +1069,11 @@ st.divider()
 
 dashboard_page = st.radio(
     "Dashboard",
-    options=["◉  Live operations", "↗  Crime trend analysis"],
+    options=[
+        "◉  Live operations",
+        "↗  Crime trend analysis",
+        "▤  Track Complaint",
+    ],
     horizontal=True,
     label_visibility="collapsed",
     key="command-center-page",
@@ -1117,6 +1290,9 @@ def render_live_dashboard():
     except (requests.RequestException, ValueError, KeyError) as exc:
         incidents_data, units_data, police_stations = [], [], []
         data_error = str(exc)
+
+    if not data_error:
+        st.session_state["dashboard_incidents_for_tracking"] = incidents_data
 
     if data_error:
         st.error(f"Telemetry service unavailable: {data_error}")
@@ -2617,4 +2793,7 @@ def render_live_dashboard():
                         args=(selected_route_incident_id,),
                     )
 
-render_live_dashboard()
+if dashboard_page == "▤  Track Complaint":
+    render_complaint_tracking()
+else:
+    render_live_dashboard()
