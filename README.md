@@ -60,6 +60,10 @@ The charts describe recorded reports, not forecasts or verified incidents.
 The view flags unusual reporting days for operator review; it does not predict
 crime.
 
+Select **Crime risk zones** to group existing reports by area into lower,
+moderate, and higher relative report-count tiers. These are descriptive counts,
+not validated crime-risk predictions.
+
 The Station Route Planner lets an operator choose an active or queued incident,
 route from a nearby station to the crime spot, and compare an alternate station.
 Road distance and estimated travel time come from OSRM and OpenStreetMap data;
